@@ -235,7 +235,7 @@ AudioSource:
   serializedVersion: 4
   OutputAudioMixerGroup: {fileID: 0}
   m_audioClip: {fileID: 8300000, guid: e36f13547c9404540bb3323dcf980da0, type: 3}
-  m_PlayOnAwake: 1
+  m_PlayOnAwake: 0
   m_Volume: 1
   m_Pitch: 1
   Loop: 0
@@ -341,6 +341,7 @@ MonoBehaviour:
   spawnLeadTime: 1.5
   lanes: 4
   quantizeSubdiv: 8
+  minHoldSeconds: 0.18
 --- !u!4 &657120998
 Transform:
   m_ObjectHideFlags: 0

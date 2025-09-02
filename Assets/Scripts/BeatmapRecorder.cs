@@ -7,21 +7,9 @@ using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
-[Serializable] public class NoteData { public int lane; public float time; public float duration = 0f; }
-[Serializable] public class Beatmap {
-    public string songId = "song01";
-    public float bpm = 120f;
-    public string audioFile = "song01";
-    public float globalOffset = 0f;
-    public float spawnLeadTime = 1.5f;
-    public int lanes = 4;
-    public List<NoteData> notes = new List<NoteData>();
-}
-
 public class BeatmapRecorder : MonoBehaviour {
     [Header("Audio")]
     public AudioSource audioSource;
-    [Tooltip("Start the song this many seconds after you press Space, for stable scheduling.")]
     public float scheduleDelay = 0.10f;
 
     [Header("Beatmap Meta")]
@@ -33,47 +21,45 @@ public class BeatmapRecorder : MonoBehaviour {
     public int lanes = 4;
 
     [Header("Quantization")]
-    [Tooltip("0 = no quantize; e.g., 8 for eighths, 16 for sixteenths")]
     public int quantizeSubdiv = 0;
 
-    private readonly List<NoteData> _rawNotes = new List<NoteData>();
+    [Header("Hold/Tap")]
+    public float minHoldSeconds = 0.18f;
+
+    private readonly List<NoteData> _notes = new List<NoteData>();
+    private readonly bool[] _isDown = new bool[8];
+    private readonly float[] _downTime = new float[8];
+    private readonly KeyCode[] _keys = new KeyCode[] { KeyCode.A, KeyCode.S, KeyCode.D, KeyCode.F };
+
     private double _dspStart;
     private bool _started;
 
-    void Reset() {
-        audioSource = GetComponent<AudioSource>();
-    }
+    void Reset() { audioSource = GetComponent<AudioSource>(); }
 
     void Update() {
-        // Start / stop playback
         if (Input.GetKeyDown(KeyCode.Space)) StartSong();
         if (Input.GetKeyDown(KeyCode.Backspace)) StopSong();
 
         if (!_started) return;
 
-        // Record taps: A/S/D/F => lanes 0..3
-        if (Input.GetKeyDown(KeyCode.A)) AddNote(0);
-        if (Input.GetKeyDown(KeyCode.S)) AddNote(1);
-        if (Input.GetKeyDown(KeyCode.D)) AddNote(2);
-        if (Input.GetKeyDown(KeyCode.F)) AddNote(3);
-
-        // Save JSON
-        if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) {
-            SaveBeatmap();
+        for (int lane = 0; lane < Mathf.Min(lanes, _keys.Length); lane++) {
+            if (Input.GetKeyDown(_keys[lane])) PressLane(lane);
+            if (Input.GetKeyUp(_keys[lane])) ReleaseLane(lane);
         }
+
+        if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) SaveBeatmap();
     }
 
     void StartSong() {
-        if (!audioSource || !audioSource.clip) {
-            Debug.LogError("Assign an AudioSource with a clip.");
-            return;
-        }
-        _rawNotes.Clear();
+        if (!audioSource || !audioSource.clip) { Debug.LogError("Assign an AudioSource with a clip."); return; }
+        Array.Clear(_isDown, 0, _isDown.Length);
+        Array.Clear(_downTime, 0, _downTime.Length);
+        _notes.Clear();
         _dspStart = AudioSettings.dspTime + scheduleDelay;
         audioSource.Stop();
         audioSource.PlayScheduled(_dspStart);
         _started = true;
-        Debug.Log($"Started scheduled at dsp={_dspStart:F3}. Tap A/S/D/F to record. Press Enter to save.");
+        Debug.Log($"Started scheduled at dsp={_dspStart:F3}. Press A/S/D/F to start notes, release to end. Enter to save.");
     }
 
     void StopSong() {
@@ -83,27 +69,59 @@ public class BeatmapRecorder : MonoBehaviour {
         Debug.Log("Stopped.");
     }
 
-    void AddNote(int lane) {
-        double now = AudioSettings.dspTime;
-        float t = (float)(now - _dspStart); // seconds since song start
-        _rawNotes.Add(new NoteData { lane = Mathf.Clamp(lane, 0, lanes - 1), time = t, duration = 0f });
-        Debug.Log($"Note lane {lane} @ {t:0.000}s");
+    void PressLane(int lane) {
+        if (lane < 0 || lane >= lanes) return;
+        if (_isDown[lane]) return;
+        _isDown[lane] = true;
+        _downTime[lane] = (float)(AudioSettings.dspTime - _dspStart);
     }
 
-    void SaveBeatmap() {
-        // Copy + sort
-        var notes = new List<NoteData>(_rawNotes);
-        notes.Sort((a,b) => a.time.CompareTo(b.time));
+    void ReleaseLane(int lane) {
+        if (lane < 0 || lane >= lanes) return;
+        if (!_isDown[lane]) return;
+        float start = _downTime[lane];
+        float end = (float)(AudioSettings.dspTime - _dspStart);
+        _isDown[lane] = false;
+        CommitNote(lane, start, end);
+    }
 
-        // Optional quantize
+    void CommitNote(int lane, float start, float end) {
+        if (end < start) end = start;
+        float duration = end - start;
+
         if (quantizeSubdiv > 0 && bpm > 0f) {
             float beat = 60f / bpm;
             float step = beat / quantizeSubdiv;
-            for (int i = 0; i < notes.Count; i++) {
-                float q = Mathf.Round(notes[i].time / step) * step;
-                notes[i].time = Mathf.Max(0f, q);
+            float qs = Mathf.Round(start / step) * step;
+            float qe = Mathf.Round(end   / step) * step;
+            if (qe < qs) qe = qs;
+            start = Mathf.Max(0f, qs);
+            duration = Mathf.Max(0f, qe - qs);
+        }
+
+        if (duration < minHoldSeconds) duration = 0f;
+
+        _notes.Add(new NoteData {
+            lane = Mathf.Clamp(lane, 0, lanes - 1),
+            time = start,
+            duration = duration
+        });
+
+        Debug.Log(duration > 0f
+            ? $"Hold lane {lane} {start:0.000}s → {start + duration:0.000}s (dur {duration:0.000}s)"
+            : $"Tap  lane {lane} @ {start:0.000}s");
+    }
+
+    void SaveBeatmap() {
+        for (int lane = 0; lane < lanes; lane++) {
+            if (_isDown[lane]) {
+                float now = (float)(AudioSettings.dspTime - _dspStart);
+                ReleaseLane(lane);
             }
         }
+
+        var notes = new List<NoteData>(_notes);
+        notes.Sort((a, b) => a.time.CompareTo(b.time));
 
         var map = new Beatmap {
             songId = songId,
@@ -117,28 +135,19 @@ public class BeatmapRecorder : MonoBehaviour {
 
         string json = JsonUtility.ToJson(map, true);
 
-    #if UNITY_EDITOR
-        // Save directly into the Unity project (Editor only)
-        string resourcesDir = System.IO.Path.Combine(Application.dataPath, "Resources");
-        string beatmapsDir  = System.IO.Path.Combine(resourcesDir, "Beatmaps");
-        if (!System.IO.Directory.Exists(beatmapsDir))
-            System.IO.Directory.CreateDirectory(beatmapsDir);
-
-        string path = System.IO.Path.Combine(beatmapsDir, $"{songId}.json");
-        System.IO.File.WriteAllText(path, json);
-        AssetDatabase.Refresh(); // make Unity import it as a TextAsset
-
-        Debug.Log($"<b>Saved</b> beatmap to <i>Assets/Resources/Beatmaps/{songId}.json</i> " +
-                "and refreshed the AssetDatabase. " +
-                "Load with Resources.Load<TextAsset>(\"Beatmaps/" + songId + "\").");
-    #else
-        // Fallback for builds (cannot write into Assets at runtime)
+#if UNITY_EDITOR
+        string resourcesDir = Path.Combine(Application.dataPath, "Resources");
+        string beatmapsDir  = Path.Combine(resourcesDir, "Beatmaps");
+        if (!Directory.Exists(beatmapsDir)) Directory.CreateDirectory(beatmapsDir);
+        string path = Path.Combine(beatmapsDir, $"{songId}.json");
+        File.WriteAllText(path, json);
+        AssetDatabase.Refresh();
+        Debug.Log($"Saved to Assets/Resources/Beatmaps/{songId}.json and refreshed. Load with Resources.Load<TextAsset>(\"Beatmaps/{songId}\").");
+#else
         string dir = Application.persistentDataPath;
-        string path = System.IO.Path.Combine(dir, $"{songId}.json");
-        System.IO.File.WriteAllText(path, json);
-        Debug.Log($"Saved beatmap to: {path}\n" +
-                "In builds, copy this file into your project's Assets/Resources/Beatmaps/ folder.");
-    #endif
+        string path = Path.Combine(dir, $"{songId}.json");
+        File.WriteAllText(path, json);
+        Debug.Log($"Saved beatmap to: {path}");
+#endif
     }
-
 }
