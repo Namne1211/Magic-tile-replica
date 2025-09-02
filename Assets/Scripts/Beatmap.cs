@@ -2,15 +2,21 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
+/// <summary>
+/// Data structure for a single note in a beatmap.
+/// </summary>
 [Serializable]
 public class NoteData {
     public int lane;
     public float time;
     public float duration = 0f;
 }
-
+/// <summary>
+/// Data structure for a beatmap, including metadata and a list of notes.
+/// </summary>
 [Serializable]
-public class Beatmap {
+public class Beatmap
+{
     public string songId = "song01";
     public float bpm = 120f;
     public string audioFile = "song01";
@@ -20,6 +26,9 @@ public class Beatmap {
     public List<NoteData> notes = new List<NoteData>();
 }
 
+/// <summary>
+/// Loads a Beatmap (JSON) and associated AudioClip from Resources.
+/// </summary>
 public static class BeatmapLoader {
     public static Beatmap Load(string id) {
         var ta = Resources.Load<TextAsset>($"Beatmaps/{id}");

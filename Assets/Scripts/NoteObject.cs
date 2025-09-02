@@ -1,76 +1,84 @@
 using UnityEngine;
 
+/// <summary>
+/// Renders and positions a note in world space. For tap notes, it follows a single point.
+/// For long notes, it stretches the sprite vertically to span from head to tail time
+/// and keeps the object centered between the two.
+/// </summary>
 public class NoteObject : MonoBehaviour {
+    [HideInInspector]
     public NoteData data;
+
     SongConductor _conductor;
     float _hitY;
     float _speed;
-    SpriteRenderer _head;
-    SpriteRenderer _body;
-    float _bodyBaseHeight;
+    SpriteRenderer _sr;
+    float _baseSpriteHeight;
+    Vector3 _origLocalScale;
 
+    /// <summary>
+    /// Initializes the note with timing, travel parameters, caches sprite/scale info,
+    /// snaps it to the correct Y based on current song time, and applies initial shape.
+    /// </summary>
+    /// <param name="c">Song time source.</param>
+    /// <param name="hitY">World Y of the hit/judge line.</param>
+    /// <param name="speed">Travel speed in world units per second.</param>
+    /// <param name="note">Beatmap data for this note.</param>
     public void Init(SongConductor c, float hitY, float speed, NoteData note) {
         _conductor = c;
         _hitY = hitY;
         _speed = speed;
         data = note;
 
-        if (_head == null) _head = GetComponent<SpriteRenderer>();
+        if (_sr == null) _sr = GetComponent<SpriteRenderer>();
 
-        if (data.duration > 0f) {
-            if (_body == null) {
-                var go = new GameObject("Body");
-                go.transform.SetParent(transform, false);
-                _body = go.AddComponent<SpriteRenderer>();
-                _body.sprite = _head ? _head.sprite : null;
-                _body.color = _head ? new Color(_head.color.r, _head.color.g, _head.color.b, 1f) : new Color(0f, 0f, 0f, 0.6f);
-                if (_head) {
-                    _body.sortingLayerID = _head.sortingLayerID;
-                    _body.sortingOrder = _head.sortingOrder - 1;
-                }
-                _body.transform.localScale = Vector3.one;
-            }
-            _body.enabled = true;
-            _bodyBaseHeight = (_body.sprite ? (_body.sprite.rect.height / _body.sprite.pixelsPerUnit) : 1f);
-            if (_bodyBaseHeight < 1e-4f) _bodyBaseHeight = 1f;
-        } else {
-            if (_body) _body.enabled = false;
-        }
+        _origLocalScale = transform.localScale;
+        _baseSpriteHeight = (_sr && _sr.sprite) ? (_sr.sprite.rect.height / _sr.sprite.pixelsPerUnit) : 1f;
+        if (_baseSpriteHeight < 1e-4f) _baseSpriteHeight = 1f;
 
         float yNow = _hitY + (data.time - _conductor.SongTime) * _speed;
         var p = transform.position;
         transform.position = new Vector3(p.x, yNow, p.z);
-        UpdateBody();
+
+        UpdateShape();
     }
 
+    /// <summary>
+    /// Per-frame update: re-evaluates the note's position/scale from current song time.
+    /// </summary>
     void Update() {
         if (_conductor == null) return;
-        float t = _conductor.SongTime;
-        float y = _hitY + (data.time - t) * _speed;
-        var p = transform.position;
-        transform.position = new Vector3(p.x, y, p.z);
-        UpdateBody();
+        UpdateShape();
     }
 
-    void UpdateBody() {
-        if (_body == null || data.duration <= 0f) return;
-
+    /// <summary>
+    /// Computes the note's world Y (and scale if long note) from the song time.
+    /// Tap notes: keep original local scale and move along Y.
+    /// Long notes: stretch along Y so the sprite spans from head to tail and stay centered.
+    /// </summary>
+    void UpdateShape() {
         float t = _conductor.SongTime;
-        float headY = transform.position.y;
-        float tailY = _hitY + (data.time + data.duration - t) * _speed;
-        float midY = 0.5f * (headY + tailY);
-        float hWorld = Mathf.Abs(tailY - headY);
 
-        const float EPS = 1e-4f;
-        float parentScaleY = Mathf.Max(transform.lossyScale.y, EPS);
-        float baseH = Mathf.Max(_bodyBaseHeight, EPS);
+        if (data.duration > 0f) {
+            float headY = _hitY + (data.time - t) * _speed;
+            float tailY = _hitY + (data.time + data.duration - t) * _speed;
+            float midY  = 0.5f * (headY + tailY);
+            float hWorld = Mathf.Abs(tailY - headY);
 
-        float sY = hWorld / (baseH * parentScaleY);
-        if (!float.IsFinite(sY)) sY = 0.001f;
-        sY = Mathf.Clamp(sY, 0.001f, 1000f);
+            float parentScaleY = transform.parent ? transform.parent.lossyScale.y : 1f;
+            const float EPS = 1e-4f;
+            parentScaleY = Mathf.Max(parentScaleY, EPS);
 
-        _body.transform.localScale = new Vector3(1f, sY, 1f);
-        var bp = _body.transform.position;
-        _body.transform.position = new Vector3(transform.position.x, midY, bp.z);
+            float localY = Mathf.Max(hWorld / (Mathf.Max(_baseSpriteHeight, EPS) * parentScaleY), 0.001f);
+
+            transform.localScale = new Vector3(_origLocalScale.x, localY, _origLocalScale.z);
+            var p = transform.position;
+            transform.position = new Vector3(p.x, midY, p.z);
+        } else {
+            float y = _hitY + (data.time - t) * _speed;
+            var p = transform.position;
+            transform.position = new Vector3(p.x, y, p.z);
+            transform.localScale = _origLocalScale;
+        }
     }
 }
