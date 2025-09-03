@@ -286,8 +286,8 @@ public class GameManager : MonoBehaviour {
     /// </summary>
     int ScoreFor(ScoreTier tier) {
         switch (tier) {
-            case ScoreTier.Excellent: return baseScorePerNote * 2;
-            case ScoreTier.Great:     return (int)(baseScorePerNote * 1.5f);
+            case ScoreTier.Excellent: return baseScorePerNote * 2 * _combo;
+            case ScoreTier.Great:     return (int)(baseScorePerNote * 1.5f) * _combo;
             case ScoreTier.Good:      return  baseScorePerNote;
         }
         return 0;
