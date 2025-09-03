@@ -83,6 +83,12 @@ public class GameManager : MonoBehaviour {
     [Tooltip("Seconds to scale back to base.")]
     [Min(0f)] public float uiPopDownTime = 0.10f;
 
+    [Header("End Conditions")]
+    [Tooltip("Automatically trigger Game Over when the song finishes.")]
+    public bool gameOverOnSongEnd = true;
+    [Tooltip("Extra seconds to avoid early cutoff due to scheduling jitter.")]
+    [Min(0f)] public float songEndGrace = 0.05f;
+
     Beatmap _map;
     AudioClip _clip;
     int _spawnIndex;
@@ -146,12 +152,38 @@ public class GameManager : MonoBehaviour {
     /// <summary>
     /// Main frame loop: spawns upcoming notes, advances lane state, processes input, and refreshes UI.
     /// </summary>
-    void Update() {
+    void Update()
+    {
         if (!_started) return;
+
+        bool flowControl = SongRunning();
+        if (!flowControl)
+        {
+            return;
+        }
+
         SpawnNotes();
         foreach (var lane in lanes) lane.UpdateAuto();
         HandleInput();
         UpdateUI();
+    }
+
+    private bool SongRunning()
+    {
+        if (gameOverOnSongEnd && _started && _clip && conductor)
+        {
+            float songTime = conductor.SongTime;
+
+            // Prefer time-based check; also fall back to AudioSource state as a safety
+            if (songTime >= (_clip.length - songEndGrace) ||
+                (conductor.audioSource && !conductor.audioSource.isPlaying && songTime > 0f))
+            {
+                TriggerGameOver();
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -357,16 +389,6 @@ public class GameManager : MonoBehaviour {
     public void Despawn(NoteObject n) {
         if (!n) return;
         notePool.Return(n.gameObject);
-    }
-
-    /// <summary>
-    /// UI button callback: resets gameplay by reloading the active scene.
-    /// </summary>
-    public void RestartButton() {
-        _started = false;
-        conductor.StopSong();
-        Time.timeScale = 1f;
-        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 
     /// <summary>
